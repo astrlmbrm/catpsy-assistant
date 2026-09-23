@@ -19,6 +19,7 @@ from aiogram.webhook.aiohttp_server import (
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 CONTACT_URL = "https://t.me/nataliia_catpsy_pro"
 
 dp = Dispatcher(storage=MemoryStorage())
@@ -26,6 +27,18 @@ dp = Dispatcher(storage=MemoryStorage())
 @dp.message(Command("myid"))
 async def show_my_id(message: Message):
     await message.answer(f"Ваш Telegram ID: {message.chat.id}")
+@dp.message(Command("testadmin"))
+async def test_admin(message: Message):
+    if not ADMIN_CHAT_ID:
+        await message.answer("ADMIN_CHAT_ID не найден")
+        return
+
+    await message.bot.send_message(
+        chat_id=int(ADMIN_CHAT_ID),
+        text="🐾 Тест: Catpsy Assistant умеет отправлять мне заявки!"
+    )
+
+    await message.answer("Тестовое сообщение отправлено.")
 
 # =========================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
