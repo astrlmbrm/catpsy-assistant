@@ -581,7 +581,6 @@ async def on_startup(bot: Bot):
 
 
 async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
     await bot.session.close()
 
 dp.startup.register(on_startup)
