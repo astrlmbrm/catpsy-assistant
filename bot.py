@@ -3,7 +3,8 @@ import os
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
@@ -11,6 +12,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 from aiogram.webhook.aiohttp_server import (
@@ -23,22 +27,6 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 CONTACT_URL = "https://t.me/nataliia_catpsy_pro"
 
 dp = Dispatcher(storage=MemoryStorage())
-
-@dp.message(Command("myid"))
-async def show_my_id(message: Message):
-    await message.answer(f"Ваш Telegram ID: {message.chat.id}")
-@dp.message(Command("testadmin"))
-async def test_admin(message: Message):
-    if not ADMIN_CHAT_ID:
-        await message.answer("ADMIN_CHAT_ID не найден")
-        return
-
-    await message.bot.send_message(
-        chat_id=int(ADMIN_CHAT_ID),
-        text="🐾 Тест: Catpsy Assistant умеет отправлять мне заявки!"
-    )
-
-    await message.answer("Тестовое сообщение отправлено.")
 
 # =========================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -99,12 +87,25 @@ def exit_buttons(back_callback):
     ]
 
 
-def finish_menu():
+def submitted_menu():
     return keyboard([
-        [button("💬 Написать мне", url=CONTACT_URL)],
         [button("🐾 Рассказать о другой проблеме", callback_data="problems")],
         [button("🏠 В главное меню", callback_data="main")],
     ])
+
+
+def contact_request_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(
+                text="📱 Поделиться номером телефона",
+                request_contact=True,
+            )],
+            [KeyboardButton(text="💬 Написать Наталии самостоятельно")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 # =========================================================
@@ -351,13 +352,87 @@ async def show_vet(callback: CallbackQuery):
     )
 
 
-async def show_finish(callback: CallbackQuery):
+async def send_application(bot: Bot, user, state: FSMContext, phone: str | None = None):
+    if not ADMIN_CHAT_ID:
+        return False
+
+    data = await state.get_data()
+
+    lines = [
+        "🐾 Новая заявка",
+        "",
+        f"Имя: {user.full_name}",
+    ]
+
+    if user.username:
+        lines.append(f"Telegram: @{user.username}")
+    if phone:
+        lines.append(f"Телефон: {phone}")
+
+    lines.extend([
+        f"Telegram ID: {user.id}",
+        "",
+        f"Проблема: {data.get('category_name', '—')}",
+        f"Уточнение: {data.get('detail', '—')}",
+    ])
+
+    if data.get("duration"):
+        lines.append(f"Когда началось: {data['duration']}")
+    if data.get("vet"):
+        lines.append(f"Осмотр ветеринара: {data['vet']}")
+
+    try:
+        await bot.send_message(
+            chat_id=int(ADMIN_CHAT_ID),
+            text="\n".join(lines),
+        )
+    except (ValueError, TypeError, TelegramAPIError):
+        return False
+
+    return True
+
+
+async def show_finish(callback: CallbackQuery, state: FSMContext):
+    user = callback.from_user
+
+    if user.username:
+        sent = await send_application(callback.bot, user, state)
+
+        if sent:
+            await state.clear()
+            await edit(
+                callback,
+                "Спасибо! Заявка отправлена 🐾\n\n"
+                "Я передал Наталии информацию о вашей ситуации. "
+                "Она напишет вам в Telegram, чтобы уточнить детали "
+                "и договориться о консультации.",
+                submitted_menu(),
+            )
+        else:
+            await edit(
+                callback,
+                "Не получилось автоматически отправить заявку.\n\n"
+                "Пожалуйста, напишите Наталии напрямую — "
+                "так ваша заявка точно не потеряется.",
+                keyboard([
+                    [button("💬 Написать Наталии", url=CONTACT_URL)],
+                    [button("🏠 В главное меню", callback_data="main")],
+                ]),
+            )
+        return
+
     await edit(
         callback,
-        "Спасибо! Я уже немного понимаю вашу ситуацию 🐾\n\n"
-        "Чтобы разобраться подробнее, напишите мне — "
-        "перед консультацией я пришлю небольшую анкету.",
-        finish_menu(),
+        "Остался последний шаг 🐾\n\n"
+        "У вас не указан username в Telegram, поэтому нужен контакт, "
+        "по которому Наталия сможет с вами связаться.\n\n"
+        "Можно поделиться номером телефона или написать Наталии самостоятельно.",
+        None,
+    )
+
+    await callback.message.answer(
+        "Выберите удобный вариант:",
+        reply_markup=contact_request_keyboard(),
     )
 
 
@@ -460,7 +535,7 @@ async def answer_callback(callback: CallbackQuery, state: FSMContext):
 
     # Исключение: знакомство новой кошки
     if option_id in category.get("skip_duration_for", []):
-        await show_finish(callback)
+        await show_finish(callback, state)
         return
 
     if category["ask_duration"]:
@@ -471,7 +546,7 @@ async def answer_callback(callback: CallbackQuery, state: FSMContext):
         await show_vet(callback)
         return
 
-    await show_finish(callback)
+    await show_finish(callback, state)
 
 
 # =========================================================
@@ -504,7 +579,7 @@ async def duration_callback(callback: CallbackQuery, state: FSMContext):
         await show_vet(callback)
         return
 
-    await show_finish(callback)
+    await show_finish(callback, state)
 
 
 # =========================================================
@@ -524,7 +599,73 @@ async def vet_callback(callback: CallbackQuery, state: FSMContext):
         vet=VET_LOOKUP[option_id],
     )
 
-    await show_finish(callback)
+    await show_finish(callback, state)
+
+
+# =========================================================
+# КОНТАКТ ДЛЯ ЗАЯВКИ
+# =========================================================
+
+@dp.message(F.contact)
+async def contact_callback(message: Message, state: FSMContext):
+    contact = message.contact
+
+    if contact.user_id and contact.user_id != message.from_user.id:
+        await message.answer(
+            "Пожалуйста, поделитесь именно своим контактом с помощью кнопки ниже.",
+            reply_markup=contact_request_keyboard(),
+        )
+        return
+
+    sent = await send_application(
+        message.bot,
+        message.from_user,
+        state,
+        phone=contact.phone_number,
+    )
+
+    if sent:
+        await state.clear()
+        await message.answer(
+            "Спасибо! Заявка отправлена 🐾\n\n"
+            "Я передал Наталии информацию о вашей ситуации. "
+            "Она свяжется с вами, чтобы уточнить детали "
+            "и договориться о консультации.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await message.answer(
+            "Что хотите сделать дальше?",
+            reply_markup=submitted_menu(),
+        )
+    else:
+        await message.answer(
+            "Не получилось автоматически отправить заявку. "
+            "Пожалуйста, напишите Наталии напрямую.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await message.answer(
+            "Открыть Telegram Наталии:",
+            reply_markup=keyboard([
+                [button("💬 Написать Наталии", url=CONTACT_URL)],
+                [button("🏠 В главное меню", callback_data="main")],
+            ]),
+        )
+
+
+@dp.message(F.text == "💬 Написать Наталии самостоятельно")
+async def direct_contact_from_request(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Хорошо 🐾 Нажмите кнопку ниже, чтобы написать Наталии напрямую.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await message.answer(
+        "Telegram Наталии:",
+        reply_markup=keyboard([
+            [button("💬 Написать Наталии", url=CONTACT_URL)],
+            [button("🏠 В главное меню", callback_data="main")],
+        ]),
+    )
 
 
 # =========================================================
@@ -576,6 +717,8 @@ bot = Bot(token=TOKEN)
 async def on_startup(bot: Bot):
     if not WEBHOOK_URL:
         raise ValueError("Не найден WEBHOOK_URL")
+    if not ADMIN_CHAT_ID:
+        raise ValueError("Не найден ADMIN_CHAT_ID")
 
     await bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}")
 
