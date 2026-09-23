@@ -3,7 +3,7 @@ import os
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
@@ -23,6 +23,9 @@ CONTACT_URL = "https://t.me/nataliia_catpsy_pro"
 
 dp = Dispatcher(storage=MemoryStorage())
 
+@dp.message(Command("myid"))
+async def show_my_id(message: Message):
+    await message.answer(f"Ваш Telegram ID: {message.chat.id}")
 
 # =========================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
