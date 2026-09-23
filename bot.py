@@ -1,5 +1,6 @@
 import asyncio
 import os
+from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
@@ -12,6 +13,10 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 
+from aiogram.webhook.aiohttp_server import (
+    SimpleRequestHandler,
+    setup_application,
+)
 
 TOKEN = os.getenv("BOT_TOKEN")
 CONTACT_URL = "https://t.me/nataliia_catpsy_pro"
@@ -543,14 +548,38 @@ async def back_duration(callback: CallbackQuery, state: FSMContext):
 # ЗАПУСК
 # =========================================================
 
-async def main():
-    if not TOKEN:
-        raise ValueError("Не найден BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("Не найден BOT_TOKEN")
 
-    bot = Bot(token=TOKEN)
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", "10000"))
 
-    await dp.start_polling(bot)
+bot = Bot(token=TOKEN)
+
+async def on_startup(bot: Bot):
+    if not WEBHOOK_URL:
+        raise ValueError("Не найден WEBHOOK_URL")
+
+    await bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}")
+
+
+async def on_shutdown(bot: Bot):
+    await bot.delete_webhook()
+    await bot.session.close()
+
+dp.startup.register(on_startup)
+dp.shutdown.register(on_shutdown)
+
+app = web.Application()
+
+SimpleRequestHandler(
+    dispatcher=dp,
+    bot=bot,
+).register(app, path=WEBHOOK_PATH)
+
+setup_application(app, dp, bot=bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(app, host="0.0.0.0", port=PORT)
